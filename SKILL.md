@@ -51,5 +51,7 @@ if they give a budget. The run stops on its own when the cap would be exceeded.
 
 Compare `before.json` and `after.json`: `prediction_short`, `fraction_ai`, `fraction_ai_assisted`,
 `fraction_human`, and the per-window `label` values. Report the stop reason the CLI printed (fully
-Human, round limit, or cost cap) and the estimated spend. Report the numbers as measured, including
-when the score did not move. Detectors change, so quote the Pangram `version` with any result.
+Human, round limit, cost cap, or a failed call) and the estimated spend. Exit code 1 with output
+files present means a call failed part-way: the files hold the rounds that completed, so say the
+run was partial. Report the numbers as measured, including when the score did not move. Detectors
+change, so quote the Pangram `version` with any result.

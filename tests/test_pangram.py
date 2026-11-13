@@ -120,3 +120,13 @@ def test_cost_is_per_started_100_words():
     assert pangram_cost(words(100)) == pytest.approx(0.05)
     assert pangram_cost(words(101)) == pytest.approx(0.10)
     assert pangram_cost(words(250)) == pytest.approx(0.15)
+
+
+def test_network_error_and_bad_body_raise_pangram_error():
+    def offline(request):
+        raise httpx.ConnectError("no route", request=request)
+
+    with pytest.raises(PangramError, match="ConnectError"):
+        make_client(offline).score(words(60))
+    with pytest.raises(PangramError, match="unexpected body"):
+        make_client(lambda request: httpx.Response(200, text="<html>")).score(words(60))

@@ -44,3 +44,21 @@ def test_require_env(monkeypatch):
     monkeypatch.delenv("PANGRAM_API_KEY", raising=False)
     with pytest.raises(ConfigError, match="PANGRAM_API_KEY"):
         require_env("PANGRAM_API_KEY")
+
+
+def test_wrong_types_and_invalid_yaml(tmp_path):
+    path = tmp_path / "c.yaml"
+    for body, message in [
+        ("max_rounds: two\n", "max_rounds must be a whole number"),
+        ("max_rounds: 1.5\n", "max_rounds must be a whole number"),
+        ("max_usd: lots\n", "max_usd must be a number"),
+        ("rotation: a/b\n", "rotation must be a non-empty list"),
+        ("rotation: []\n", "rotation must be a non-empty list"),
+        ("generate_model: 3\n", "generate_model must be a string"),
+        ("max_rounds: [1\n", "invalid YAML"),
+    ]:
+        path.write_text(body)
+        with pytest.raises(ConfigError, match=message):
+            load_config(str(path))
+    path.write_text("max_usd: 2\n")  # a whole number is fine where a float is expected
+    assert load_config(str(path)).max_usd == 2

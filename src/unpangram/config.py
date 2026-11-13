@@ -55,17 +55,35 @@ def load_config(path: str | None = None) -> Config:
         if explicit:
             raise ConfigError(f"config file not found: {file}")
         return Config()
-    data = yaml.safe_load(file.read_text(encoding="utf-8")) or {}
+    try:
+        data = yaml.safe_load(file.read_text(encoding="utf-8")) or {}
+    except yaml.YAMLError as exc:
+        raise ConfigError(f"{file}: invalid YAML: {exc}") from exc
     if not isinstance(data, dict):
         raise ConfigError(f"{file}: expected a YAML mapping")
     known = {f.name for f in fields(Config)}
-    unknown = sorted(set(data) - known)
+    unknown = sorted(str(key) for key in set(data) - known)
     if unknown:
         raise ConfigError(f"{file}: unknown config keys: {', '.join(unknown)}")
-    cfg = Config(**data)
-    if not isinstance(cfg.rotation, list) or not cfg.rotation:
-        raise ConfigError(f"{file}: rotation must be a non-empty list of model ids")
-    return cfg
+    defaults = Config()
+    for key, value in data.items():
+        expected = _check_type(value, getattr(defaults, key))
+        if expected:
+            raise ConfigError(f"{file}: {key} must be {expected}")
+    return Config(**data)
+
+
+def _check_type(value: object, default: object) -> str | None:
+    """What `value` should have been, judged by the default's type; None when it is fine."""
+    is_number = isinstance(value, int | float) and not isinstance(value, bool)
+    if isinstance(default, list):
+        ok = isinstance(value, list) and bool(value) and all(isinstance(v, str) for v in value)
+        return None if ok else "a non-empty list of model ids"
+    if isinstance(default, str):
+        return None if isinstance(value, str) else "a string"
+    if isinstance(default, int):
+        return None if is_number and isinstance(value, int) else "a whole number"
+    return None if is_number else "a number"
 
 
 def require_env(name: str) -> str:

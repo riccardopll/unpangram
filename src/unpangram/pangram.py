@@ -57,6 +57,7 @@ class PangramResult:
     fraction_ai_assisted: float
     fraction_human: float
     version: str
+    text: str  # the text Pangram analysed; window offsets index into this, not the input
     windows: list[Window]
     raw: dict[str, Any]
 
@@ -89,6 +90,7 @@ def parse_result(data: dict[str, Any]) -> PangramResult:
         fraction_ai_assisted=float(data.get("fraction_ai_assisted") or 0.0),
         fraction_human=float(data.get("fraction_human") or 0.0),
         version=data.get("version", ""),
+        text=data.get("text") or "",
         windows=windows,
         raw=data,
     )
@@ -136,7 +138,10 @@ class PangramClient:
 
     def _request(self, method: str, path: str, **kwargs: Any) -> dict[str, Any]:
         for attempt in range(MAX_429_RETRIES + 1):
-            resp = self._http.request(method, path, **kwargs)
+            try:
+                resp = self._http.request(method, path, **kwargs)
+            except httpx.HTTPError as exc:
+                raise PangramError(f"Pangram {method} {path} failed: {exc!r}") from exc
             if resp.status_code == 429 and attempt < MAX_429_RETRIES:
                 self._sleep(_retry_after(resp))
                 continue
@@ -144,7 +149,13 @@ class PangramClient:
                 raise PangramError(
                     f"Pangram {method} {path} failed: HTTP {resp.status_code} {resp.text[:200]}"
                 )
-            return resp.json()
+            try:
+                data = resp.json()
+            except ValueError:
+                data = None
+            if not isinstance(data, dict):
+                raise PangramError(f"Pangram {method} {path} returned an unexpected body")
+            return data
         raise AssertionError("unreachable")
 
 

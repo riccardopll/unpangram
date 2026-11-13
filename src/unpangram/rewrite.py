@@ -3,13 +3,20 @@
 from __future__ import annotations
 
 import math
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
 from .config import Config
-from .openrouter import OpenRouterClient
-from .pangram import USD_PER_100_WORDS, PangramClient, PangramResult, pangram_cost
+from .openrouter import OpenRouterClient, OpenRouterError
+from .pangram import (
+    USD_PER_100_WORDS,
+    PangramClient,
+    PangramError,
+    PangramResult,
+    pangram_cost,
+)
 
 SYSTEM_PROMPT = """You rewrite one passage of a longer document so it reads as natural, \
 plainly written human prose.
@@ -86,20 +93,33 @@ def build_messages(passage: str, before: str, after: str) -> list[dict[str, str]
     return [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": user}]
 
 
-def locate_spans(doc: str, result: PangramResult) -> list[tuple[int, int]]:
-    """Character spans of the flagged windows in `doc`, in order and non-overlapping."""
+def locate_spans(
+    doc: str, result: PangramResult, log: Callable[[str], None] = lambda _msg: None
+) -> list[tuple[int, int]]:
+    """Character spans of the flagged windows in `doc`, in order and non-overlapping.
+
+    Pangram may normalize the text it scores, and window offsets index into that returned
+    text. So an offset is trusted only when it matches `doc` exactly; otherwise the window
+    is searched for by its words, ignoring whitespace differences.
+    """
     spans: list[tuple[int, int]] = []
     cursor = 0
     for w in sorted(result.flagged_windows, key=lambda w: w.start_index):
         if not w.text.strip():
             continue
-        start = w.start_index if doc[w.start_index : w.end_index] == w.text else -1
-        if start < cursor:
-            start = doc.find(w.text, cursor)
-        if start < 0:
-            continue
-        spans.append((start, start + len(w.text)))
-        cursor = start + len(w.text)
+        start, end = w.start_index, w.end_index
+        if doc[start:end] != w.text:
+            pattern = r"\s+".join(re.escape(part) for part in w.text.split())
+            match = re.compile(pattern).search(doc, cursor)
+            if not match:
+                log(f"  window {start}-{end}: not found in the document, skipped")
+                continue
+            start, end = match.span()
+        if spans and start < cursor:  # overlaps the previous window: rewrite them as one
+            spans[-1] = (spans[-1][0], max(end, cursor))
+        else:
+            spans.append((start, end))
+        cursor = spans[-1][1]
     return spans
 
 
@@ -120,6 +140,7 @@ class RewriteOutcome:
     final_text: str
     rounds: list[RoundLog]
     stop_reason: str
+    failed: bool = False  # an API call failed mid-run; results are from the rounds before it
 
 
 def run_rewrite(
@@ -138,31 +159,44 @@ def run_rewrite(
     doc, current = text, before
     rounds: list[RoundLog] = []
     stop_reason = f"reached the round limit ({cfg.max_rounds})"
+    failed = False
 
     for number in range(1, cfg.max_rounds + 1):
         if current.fully_human:
             stop_reason = "document is fully Human with no flagged windows"
             break
         model = cfg.rotation[(number - 1) % len(cfg.rotation)]
-        spans = locate_spans(doc, current)
-        new_doc, accepted, rejected, out_of_budget = _rewrite_spans(
-            doc, spans, model, cfg, llm, budget, log
-        )
-        entry = RoundLog(number, model, len(spans), accepted, rejected, None)
+        spans = locate_spans(doc, current, log)
+        if not spans:
+            stop_reason = "no flagged window could be located in the document"
+            break
+        entry = RoundLog(number, model, len(spans), 0, 0, None)
         rounds.append(entry)
-
-        if accepted and budget.can_afford(pangram_cost(new_doc)):
-            budget.charge(pangram_cost(new_doc))
-            current = pangram.score(new_doc)
-            doc = new_doc
-            entry.result = current
-            log(f"round {number} ({model}): {accepted}/{len(spans)} rewritten, {describe(current)}")
-        elif accepted:
-            # Cannot pay to re-score, so drop this round: the final text must match `after`.
-            out_of_budget = True
+        try:
+            new_doc, entry.accepted, entry.rejected, out_of_budget = _rewrite_spans(
+                doc, spans, model, cfg, llm, budget, log
+            )
+            if entry.accepted and budget.can_afford(pangram_cost(new_doc)):
+                budget.charge(pangram_cost(new_doc))
+                current = pangram.score(new_doc)
+                doc = new_doc
+                entry.result = current
+                log(
+                    f"round {number} ({model}): {entry.accepted}/{len(spans)} rewritten, "
+                    f"{describe(current)}"
+                )
+            elif entry.accepted:
+                # Cannot pay to re-score, so drop this round: the final text must match `after`.
+                out_of_budget = True
+                entry.accepted = 0
+            else:
+                log(f"round {number} ({model}): no rewrite accepted, document unchanged")
+        except (OpenRouterError, PangramError) as exc:
+            # Keep what the earlier rounds measured: `doc` and `current` still match each other.
             entry.accepted = 0
-        else:
-            log(f"round {number} ({model}): no rewrite accepted, document unchanged")
+            stop_reason = f"round {number} ({model}) failed: {exc}"
+            failed = True
+            break
 
         if out_of_budget:
             stop_reason = f"hit the ${cfg.max_usd:.2f} cost cap"
@@ -171,7 +205,7 @@ def run_rewrite(
         if current.fully_human:
             stop_reason = "document is fully Human with no flagged windows"
 
-    return RewriteOutcome(before, current, doc, rounds, stop_reason)
+    return RewriteOutcome(before, current, doc, rounds, stop_reason, failed)
 
 
 def _rewrite_spans(
@@ -207,7 +241,8 @@ def _rewrite_spans(
 
         chat = llm.chat(model, messages, max_tokens=max_tokens)
         budget.charge(usage_cost(cfg, chat.usage))
-        candidate = chat.text.strip()
+        # Some models echo the prompt's tags around their answer.
+        candidate = chat.text.strip().removeprefix("<passage>").removesuffix("</passage>").strip()
         if not candidate or chat.finish_reason == "length":
             rejected += 1
             log(f"  window {start}-{end}: rejected (empty or truncated output)")

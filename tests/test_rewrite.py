@@ -1,18 +1,19 @@
 import pytest
 
 from unpangram.config import Config
-from unpangram.openrouter import ChatResult
-from unpangram.pangram import parse_result
+from unpangram.openrouter import ChatResult, OpenRouterError
+from unpangram.pangram import PangramError, parse_result
 from unpangram.rewrite import (
     SYSTEM_PROMPT,
     Budget,
     BudgetExceeded,
     cosine,
+    locate_spans,
     run_rewrite,
     usage_cost,
 )
 
-from .conftest import pangram_response, words
+from .conftest import pangram_response, window, words
 
 HUMAN = words(40, "plain")
 AI = words(40, "robot")
@@ -151,3 +152,84 @@ def test_prompt_states_the_preservation_rules():
     lowered = SYSTEM_PROMPT.lower()
     for needle in ("fact", "name", "number", "meaning", "no typos", "unicode", "garbled"):
         assert needle in lowered
+
+
+def result_with(text, *windows):
+    return parse_result({**pangram_response(text), "prediction_short": "AI", "windows": windows})
+
+
+def test_locates_windows_when_pangram_normalized_the_text():
+    # Pangram scored a whitespace-normalized copy, so its offsets and window text differ.
+    doc = f"  {HUMAN}\n\n{words(20, 'robot')}\n{words(20, 'robot')}\n"
+    returned = " ".join(doc.split())
+    result = result_with(returned, window(AI, returned.index(AI)))
+
+    assert locate_spans(doc, result) == [(doc.index("robot"), len(doc) - 1)]
+
+
+def test_overlapping_windows_are_rewritten_as_one():
+    doc = words(30, "robot")
+    half = len(words(15, "robot"))
+    result = result_with(doc, window(doc[: half + 20], 0), window(doc[half:], half))
+    assert locate_spans(doc, result) == [(0, len(doc))]
+
+
+def test_unlocatable_window_is_reported_and_stops_the_run():
+    class Elsewhere(FakePangram):
+        def score(self, text):
+            self.scored.append(text)
+            return result_with(text, window(words(40, "ghost"), 0))
+
+    logs = []
+    llm = FakeLLM({})
+    outcome = run_rewrite(DOC, cfg(), Elsewhere(), llm, Budget(1.0), log=logs.append)
+
+    assert llm.chats == [] and outcome.rounds == []
+    assert outcome.final_text == DOC
+    assert "could be located" in outcome.stop_reason
+    assert any("not found in the document" in line for line in logs)
+
+
+def test_echoed_passage_tags_are_stripped():
+    class Echo(FakeLLM):
+        def chat(self, model, messages, max_tokens=None):
+            text = f"<passage>\n{words(40, 'person')}\n</passage>"
+            return ChatResult(text=text, usage={"cost": 0.001}, finish_reason="stop")
+
+    outcome = run_rewrite(DOC, cfg(), FakePangram(), Echo({}), Budget(1.0))
+    assert outcome.final_text == f"{HUMAN}\n\n{words(40, 'person')}"
+
+
+def test_model_failure_keeps_the_earlier_rounds():
+    class FailsOnSecondModel(FakeLLM):
+        def chat(self, model, messages, max_tokens=None):
+            if model == "fam-b/two":
+                raise OpenRouterError("HTTP 404 no such model")
+            return super().chat(model, messages, max_tokens)
+
+    pangram = FakePangram(flag_words=("robot", "android"))
+    outcome = run_rewrite(
+        DOC, cfg(), pangram, FailsOnSecondModel({"fam-a/one": "android"}), Budget(5.0)
+    )
+
+    assert outcome.failed
+    assert "round 2 (fam-b/two) failed" in outcome.stop_reason and "404" in outcome.stop_reason
+    assert outcome.final_text == f"{HUMAN}\n\n{words(40, 'android')}"  # round 1 is kept
+    assert outcome.after is outcome.rounds[0].result
+    assert pangram.scored == [DOC, outcome.final_text]
+
+
+def test_failed_rescore_drops_the_round():
+    class FailsOnRescore(FakePangram):
+        def score(self, text):
+            if self.scored:
+                raise PangramError("HTTP 500")
+            return super().score(text)
+
+    outcome = run_rewrite(
+        DOC, cfg(), FailsOnRescore(), FakeLLM({"fam-a/one": "person"}), Budget(1.0)
+    )
+
+    assert outcome.failed
+    assert outcome.final_text == DOC  # the unscored rewrite is not kept
+    assert outcome.after is outcome.before

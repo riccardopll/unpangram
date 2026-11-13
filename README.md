@@ -28,8 +28,9 @@ uv run unpangram rewrite --generate "Write 300 words on tidal power."
 
 `score` prints the document-level result (prediction, AI / AI-assisted / human fractions, model
 version), lists each flagged window, and prints the text with flagged windows highlighted (colour
-in a terminal, `[[label: ...]]` markers when piped). Pangram refuses text under 50 words, and so
-does this tool.
+in a terminal, `[[label: ...]]` markers when piped). The text shown is the copy Pangram returns,
+which it may have normalized, because window offsets refer to that copy. Pangram refuses text
+under 50 words, and so does this tool.
 
 `rewrite` does the following:
 
@@ -42,6 +43,10 @@ does this tool.
 4. Re-scores the full document, and stops early if it is fully Human with no flagged windows.
 5. Writes `before.json` and `after.json` (raw Pangram responses) and `final.txt` to the output
    directory, plus `generated.txt` when `--generate` was used.
+
+If a model or Pangram call fails part-way through, the run stops, writes the results of the rounds
+that completed, and exits with code 1. A flagged window that cannot be found in the document is
+reported and left alone.
 
 Flags for `rewrite`: `--rounds`, `--models a,b,c`, `--threshold`, `--max-usd`, `--output-dir`,
 `--generate-model`. Flags override the config file.

@@ -67,3 +67,13 @@ def test_error_body_raises():
     client = make_client(lambda request: httpx.Response(200, json={"error": {"message": "nope"}}))
     with pytest.raises(OpenRouterError, match="nope"):
         client.chat("m", [])
+
+
+def test_network_error_and_bad_body_raise_openrouter_error():
+    def offline(request):
+        raise httpx.ReadTimeout("slow", request=request)
+
+    with pytest.raises(OpenRouterError, match="ReadTimeout"):
+        make_client(offline).chat("m", [])
+    with pytest.raises(OpenRouterError, match="unexpected body"):
+        make_client(lambda request: httpx.Response(200, text="<html>")).chat("m", [])

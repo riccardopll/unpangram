@@ -92,3 +92,42 @@ def test_missing_api_key_is_a_clean_error(env, monkeypatch, capsys):
 def test_cost_cap_flag(env, capsys):
     assert run("rewrite", "in.txt", "--max-usd", "0.01") == 1
     assert "cap" in capsys.readouterr().err
+
+
+def test_score_highlights_the_text_pangram_returned(env, capsys):
+    # Offsets index into Pangram's normalized text, not into the file on disk.
+    (env / "in.txt").write_text(f"  {HUMAN}\n\n\n\n{AI}\n")
+
+    def normalizing(request):
+        if request.method == "POST":
+            return httpx.Response(200, json={"task_id": "t1"})
+        return httpx.Response(200, json=pangram_response(DOC, flagged=[AI]))
+
+    assert main(["score", "in.txt"], transport=httpx.MockTransport(normalizing)) == 0
+    assert f"{HUMAN}\n\n[[AI-Generated: {AI}]]" in capsys.readouterr().out
+
+
+def test_rewrite_failure_still_writes_outputs_and_exits_nonzero(env, capsys):
+    def failing_model(request):
+        if request.url.host == "openrouter.ai":
+            return httpx.Response(404, text="no such model")
+        return fake_apis(request)
+
+    code = main(
+        ["rewrite", "in.txt", "--output-dir", "out"], transport=httpx.MockTransport(failing_model)
+    )
+    assert code == 1
+    assert (env / "out" / "final.txt").read_text() == DOC
+    before = json.loads((env / "out" / "before.json").read_text())
+    assert before == json.loads((env / "out" / "after.json").read_text())
+    assert "round 1 (moonshotai/kimi-k2.5) failed" in capsys.readouterr().err
+
+
+def test_bad_config_and_unreadable_input_are_clean_errors(env, capsys):
+    (env / "unpangram.yaml").write_text("max_rounds: many\n")
+    assert run("score", "in.txt") == 1
+    assert "max_rounds must be a whole number" in capsys.readouterr().err
+    (env / "unpangram.yaml").unlink()
+    (env / "in.txt").write_bytes(b"\xff\xfe" * 40)
+    assert run("score", "in.txt") == 1
+    assert run("score", "missing.txt") == 1

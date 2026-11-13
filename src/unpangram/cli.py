@@ -122,7 +122,8 @@ def cmd_score(args: argparse.Namespace, cfg: Config, transport: httpx.BaseTransp
     result = make_pangram(cfg, transport).score(text)
     print(format_result(result))
     print()
-    print(highlight(text, result, color=sys.stdout.isatty()))
+    # Window offsets index into the text Pangram returns, which it may have normalized.
+    print(highlight(result.text or text, result, color=sys.stdout.isatty()))
     print(f"\ncost: ${pangram_cost(text):.2f}", file=sys.stderr)
     return 0
 
@@ -162,7 +163,9 @@ def cmd_rewrite(
     print(f"stopped: {outcome.stop_reason}")
     print(f"estimated cost: ${budget.spent:.4f} of ${budget.cap:.2f} cap")
     print(f"wrote before.json, after.json and final.txt to {out_dir}/")
-    return 0
+    if outcome.failed:
+        print(f"unpangram: {outcome.stop_reason}", file=sys.stderr)
+    return 1 if outcome.failed else 0
 
 
 def main(argv: list[str] | None = None, transport: httpx.BaseTransport | None = None) -> int:
@@ -172,7 +175,14 @@ def main(argv: list[str] | None = None, transport: httpx.BaseTransport | None = 
         cfg = load_config(args.config)
         command = cmd_score if args.command == "score" else cmd_rewrite
         return command(args, cfg, transport)
-    except (ConfigError, PangramError, OpenRouterError, BudgetExceeded, OSError) as exc:
+    except (
+        ConfigError,
+        PangramError,
+        OpenRouterError,
+        BudgetExceeded,
+        OSError,
+        UnicodeDecodeError,
+    ) as exc:
         print(f"unpangram: {exc}", file=sys.stderr)
         return 1
 

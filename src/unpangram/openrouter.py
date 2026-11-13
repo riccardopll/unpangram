@@ -61,12 +61,20 @@ class OpenRouterClient:
         return vectors, data.get("usage") or {}
 
     def _post(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
-        resp = self._http.post(path, json=body)
+        try:
+            resp = self._http.post(path, json=body)
+        except httpx.HTTPError as exc:
+            raise OpenRouterError(f"OpenRouter {path} failed: {exc!r}") from exc
         if resp.is_error:
             raise OpenRouterError(
                 f"OpenRouter {path} failed: HTTP {resp.status_code} {resp.text[:200]}"
             )
-        data = resp.json()
-        if isinstance(data, dict) and data.get("error"):
+        try:
+            data = resp.json()
+        except ValueError:
+            data = None
+        if not isinstance(data, dict):
+            raise OpenRouterError(f"OpenRouter {path} returned an unexpected body")
+        if data.get("error"):
             raise OpenRouterError(f"OpenRouter {path} error: {data['error']}")
         return data
