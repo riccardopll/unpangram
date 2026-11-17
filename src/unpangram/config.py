@@ -30,12 +30,12 @@ class Config:
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     rotation: list[str] = field(
         default_factory=lambda: [
-            "moonshotai/kimi-k2.5",
-            "deepseek/deepseek-v4.1-flash",
-            "qwen/qwen3.8-flash",
+            "moonshotai/kimi-k3.1-pro",
+            "deepseek/deepseek-v4.1-flash-1017",
+            "qwen/qwen4-max",
         ]
     )
-    generate_model: str = "anthropic/claude-sonnet-4.6"
+    generate_model: str = "anthropic/claude-sonnet-5.5"
     embedding_model: str = "openai/text-embedding-3-small"
     max_rounds: int = 2
     similarity_threshold: float = 0.8
@@ -43,8 +43,8 @@ class Config:
     context_chars: int = 600
     output_dir: str = "unpangram-out"
     # Used to estimate cost before a call, and after it when OpenRouter reports no cost.
-    input_price_per_mtok: float = 1.0
-    output_price_per_mtok: float = 5.0
+    input_price_per_mtok: float = 2.0
+    output_price_per_mtok: float = 10.0
 
 
 def load_config(path: str | None = None) -> Config:

@@ -60,18 +60,18 @@ optional; these are the defaults:
 ```yaml
 pangram_model: pangram-4
 rotation:
-  - moonshotai/kimi-k2.5
-  - deepseek/deepseek-v4.1-flash
-  - qwen/qwen3.8-flash
-generate_model: anthropic/claude-sonnet-4.6
+  - moonshotai/kimi-k3.1-pro
+  - deepseek/deepseek-v4.1-flash-1017
+  - qwen/qwen4-max
+generate_model: anthropic/claude-sonnet-5.5
 embedding_model: openai/text-embedding-3-small
 max_rounds: 2
 similarity_threshold: 0.8
 max_usd: 1.0
 context_chars: 600          # context sent on each side of a window
 output_dir: unpangram-out
-input_price_per_mtok: 1.0   # USD per million tokens, used for cost estimates
-output_price_per_mtok: 5.0
+input_price_per_mtok: 2.0   # USD per million tokens, used for cost estimates
+output_price_per_mtok: 10.0
 poll_interval: 1.0          # seconds between Pangram task polls
 poll_timeout: 120.0
 ```

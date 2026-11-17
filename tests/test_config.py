@@ -8,12 +8,12 @@ def test_defaults(tmp_path, monkeypatch):
     cfg = load_config()
     assert cfg == Config()
     assert cfg.rotation == [
-        "moonshotai/kimi-k2.5",
-        "deepseek/deepseek-v4.1-flash",
-        "qwen/qwen3.8-flash",
+        "moonshotai/kimi-k3.1-pro",
+        "deepseek/deepseek-v4.1-flash-1017",
+        "qwen/qwen4-max",
     ]
     assert (cfg.max_rounds, cfg.similarity_threshold) == (2, 0.8)
-    assert cfg.generate_model == "anthropic/claude-sonnet-4.6"
+    assert cfg.generate_model == "anthropic/claude-sonnet-5.5"
     assert cfg.pangram_model == "pangram-4"
 
 

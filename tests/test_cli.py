@@ -27,7 +27,7 @@ def fake_apis(request):
         data = [{"index": 0, "embedding": [1.0, 0.0]}, {"index": 1, "embedding": [1.0, 0.1]}]
         return httpx.Response(200, json={"data": data, "usage": {"cost": 0.0001}})
     body = json.loads(request.content)
-    content = DOC if body["model"] == "anthropic/claude-sonnet-4.6" else words(40, "person")
+    content = DOC if body["model"] == "anthropic/claude-sonnet-5.5" else words(40, "person")
     return httpx.Response(
         200,
         json={
@@ -120,7 +120,7 @@ def test_rewrite_failure_still_writes_outputs_and_exits_nonzero(env, capsys):
     assert (env / "out" / "final.txt").read_text() == DOC
     before = json.loads((env / "out" / "before.json").read_text())
     assert before == json.loads((env / "out" / "after.json").read_text())
-    assert "round 1 (moonshotai/kimi-k2.5) failed" in capsys.readouterr().err
+    assert "round 1 (moonshotai/kimi-k3.1-pro) failed" in capsys.readouterr().err
 
 
 def test_bad_config_and_unreadable_input_are_clean_errors(env, capsys):
